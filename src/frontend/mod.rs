@@ -6,7 +6,7 @@ mod matrix;
 use matrix::Canvas;
 
 #[function_component(App)]
-fn app() -> Html {
+pub fn app() -> Html {
     let bin_state = use_state(|| false);
     let onclick = {
         let bin_state = bin_state.clone();
@@ -59,8 +59,4 @@ fn app() -> Html {
             />
         </>
     }
-}
-
-fn main() {
-    yew::Renderer::<App>::new().render();
 }
