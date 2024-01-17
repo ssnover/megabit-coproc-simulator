@@ -28,7 +28,7 @@ pub async fn serve(port: u16, to_ws_rx: Receiver<String>, from_ws_tx: Sender<Str
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     tracing::debug!("listening on {}", listener.local_addr().unwrap());
-    let dist_path: String = std::env::var("SIM_DIST_DIR").unwrap_or("../frontend/dist".to_string());
+    let dist_path: String = std::env::var("SIM_DIST_DIR").unwrap_or("./dist".to_string());
     let state = AppState {
         to_ws_handler: to_ws_rx,
         from_ws_handler: from_ws_tx,

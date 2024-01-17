@@ -1,10 +1,10 @@
-#[cfg(feature = "ssr")]
+#[cfg(feature = "backend")]
 mod backend;
 
-#[cfg(feature = "csr")]
+#[cfg(feature = "frontend")]
 mod frontend;
 
-#[cfg(feature = "ssr")]
+#[cfg(feature = "backend")]
 #[tokio::main]
 async fn main() {
     use backend::*;
@@ -25,18 +25,18 @@ async fn main() {
 
     tokio::select! {
         _ = web_server::serve(8000, to_ws_rx, from_ws_tx) => {
-            tracing::error!("HTTP server exited");
+            tracing::info!("HTTP server exited");
         },
         _ = simulator::run(from_ws_rx, from_serial_rx, to_ws_tx, to_serial_tx) => {
-            tracing::error!("Simulator exited");
+            tracing::info!("Simulator exited");
         }
-        _ = serial::run("/dev/megabit-sim", from_serial_tx, to_serial_rx) => {
-            tracing::error!("Virtual TTY exited");
+        _ = serial::run("/tmp/megabit-sim", from_serial_tx, to_serial_rx) => {
+            tracing::info!("Virtual TTY exited");
         }
     };
 }
 
-#[cfg(feature = "csr")]
+#[cfg(feature = "frontend")]
 fn main() {
     yew::Renderer::<frontend::App>::new().render();
 }
