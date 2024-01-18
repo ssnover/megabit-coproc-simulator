@@ -1,7 +1,7 @@
 use async_channel::{Receiver, Sender};
 use nix::pty::{self, OpenptyResult};
 use std::{
-    io,
+    io::{self, ErrorKind},
     os::fd::{AsRawFd, FromRawFd, IntoRawFd},
     path::{Path, PathBuf},
     time::Duration,
@@ -41,63 +41,13 @@ impl VirtualSerial {
     }
 
     pub async fn listen(self, to_simulator: Sender<Vec<u8>>, from_simulator: Receiver<Vec<u8>>) {
-        let (mut reader, mut writer) = tokio::io::split(self.host_file);
+        let (reader, writer) = tokio::io::split(self.host_file);
 
-        // tokio::join!(
-        //     Self::handle_incoming_serial_bytes(reader, to_simulator),
-        //     Self::handle_simulator_packet(writer, from_simulator)
-        // );
         tokio::join!(
-            async {
-                let mut incoming_buffer = Vec::with_capacity(1024);
-                while let Ok(_bytes_read) = reader.read_buf(&mut incoming_buffer).await {
-                    if let Ok(decoded_data) = cobs::decode_vec(&incoming_buffer[..]) {
-                        tracing::debug!(
-                    "Decoded a payload of {} bytes from buffer of {} bytes. Whole buffer: {incoming_buffer:02x?}",
-                    decoded_data.len(),
-                    incoming_buffer.len()
-                );
-                        if let Err(err) = to_simulator.send(decoded_data).await {
-                            tracing::error!("Failed to send serial payload: {err}");
-                            break;
-                        }
-                        let (encoded_len, _) = incoming_buffer
-                            .iter()
-                            .enumerate()
-                            .find(|(_idx, elem)| **elem == 0x00)
-                            .expect("Need a terminator to have a valid COBS encoded payload");
-                        incoming_buffer =
-                            Vec::from_iter(incoming_buffer.into_iter().skip(encoded_len + 1));
-                    }
-                }
-                tracing::info!("Exiting handler for incoming serial data");
-            },
-            async {
-                while let Ok(msg) = from_simulator.recv().await {
-                    let mut encoded_data = cobs::encode_vec(&msg[..]);
-                    encoded_data.push(0x00);
-                    tracing::debug!("Sending serial data: {encoded_data:02x?}");
-                    // The following is hanging for unclear reasons...
-                    if tokio::time::timeout(Duration::from_secs(5), async {
-                        if let Err(err) = writer.write(&encoded_data[..]).await {
-                            tracing::error!("Failed to write encoded serial packet: {err}");
-                            return;
-                        } else {
-                            if let Err(err) = writer.flush().await {
-                                tracing::error!("Failed to flush: {err}");
-                            }
-                        }
-                    })
-                    .await
-                    .is_err()
-                    {
-                        tracing::debug!("Writing timed out");
-                    } else {
-                        tracing::debug!("Serial send complete");
-                    }
-                }
-            }
+            Self::handle_incoming_serial_bytes(reader, to_simulator),
+            Self::handle_simulator_packet(writer, from_simulator)
         );
+
         tracing::info!("Exiting serial device listening context");
     }
 
@@ -105,26 +55,51 @@ impl VirtualSerial {
         mut reader: ReadHalf<File>,
         to_simulator: Sender<Vec<u8>>,
     ) {
+        // Alright, this function is a bit of a doozy. The chief problem is that tokio Files lock
+        // in order to read or write because Linux has no means of polling them for new data.
+        // This means we must time out the read periodically or else it will grab the lock and
+        // prevent the other task from writing data. Additionally, I've added a small delay at the
+        // end of the loop to give the write context a little bit of extra time to grab and write.
+        // When the write task gets starved, weird things happen. In particular, despite it being
+        // a pseudoterminal, I've observed written data being read out (as if it was echoed from
+        // the other side). My goal here is principally to prevent this task from starving the
+        // other one.
         let mut incoming_buffer = Vec::with_capacity(1024);
-        while let Ok(_bytes_read) = reader.read_buf(&mut incoming_buffer).await {
-            if let Ok(decoded_data) = cobs::decode_vec(&incoming_buffer[..]) {
-                tracing::debug!(
-                    "Decoded a payload of {} bytes from buffer of {} bytes. Whole buffer: {incoming_buffer:02x?}",
-                    decoded_data.len(),
-                    incoming_buffer.len()
-                );
-                if let Err(err) = to_simulator.send(decoded_data).await {
-                    tracing::error!("Failed to send serial payload: {err}");
-                    break;
-                }
-                let (encoded_len, _) = incoming_buffer
-                    .iter()
-                    .enumerate()
-                    .find(|(_idx, elem)| **elem == 0x00)
-                    .expect("Need a terminator to have a valid COBS encoded payload");
-                incoming_buffer = Vec::from_iter(incoming_buffer.into_iter().skip(encoded_len + 1));
+        loop {
+            if let Ok(Err(err)) = tokio::time::timeout(
+                Duration::from_millis(5),
+                reader.read_buf(&mut incoming_buffer),
+            )
+            .await
+            {
+                tracing::error!("Error reading from the pty: {err}");
             }
+
+            if incoming_buffer.len() >= 3 {
+                tracing::debug!("Got data");
+                if let Ok(decoded_data) = cobs::decode_vec(&incoming_buffer[..]) {
+                    tracing::debug!(
+                        "Decoded a payload of {} bytes from buffer of {} bytes. Whole buffer: {incoming_buffer:02x?}",
+                        decoded_data.len(),
+                        incoming_buffer.len()
+                    );
+                    if let Err(err) = to_simulator.send(decoded_data).await {
+                        tracing::error!("Failed to send serial payload: {err}");
+                        break;
+                    }
+                    let (encoded_len, _) = incoming_buffer
+                        .iter()
+                        .enumerate()
+                        .find(|(_idx, elem)| **elem == 0x00)
+                        .expect("Need a terminator to have a valid COBS encoded payload");
+                    incoming_buffer =
+                        Vec::from_iter(incoming_buffer.into_iter().skip(encoded_len + 1));
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
+
         tracing::info!("Exiting handler for incoming serial data");
     }
 
@@ -140,7 +115,6 @@ impl VirtualSerial {
             if tokio::time::timeout(Duration::from_secs(5), async {
                 if let Err(err) = writer.write(&encoded_data[..]).await {
                     tracing::error!("Failed to write encoded serial packet: {err}");
-                    return;
                 } else {
                     if let Err(err) = writer.flush().await {
                         tracing::error!("Failed to flush: {err}");

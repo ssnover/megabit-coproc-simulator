@@ -34,16 +34,19 @@ pub async fn serve(port: u16, to_ws_rx: Receiver<String>, from_ws_tx: Sender<Str
         from_ws_handler: from_ws_tx,
     };
     let app = Router::new()
-        .fallback_service(ServeDir::new(dist_path).append_index_html_on_directories(true))
         .route("/ws", get(ws_handler))
+        .fallback_service(ServeDir::new(dist_path).append_index_html_on_directories(true))
         .with_state(state)
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::default().include_headers(true)),
         );
-    axum::serve(listener, app.layer(TraceLayer::new_for_http()))
-        .await
-        .unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }
 
 async fn ws_handler(
@@ -54,7 +57,8 @@ async fn ws_handler(
     tracing::info!("Client at {addr} connected");
     let to_ws = state.to_ws_handler.clone();
     let from_ws = state.from_ws_handler.clone();
-    ws.on_upgrade(move |socket| handle_socket(socket, addr, to_ws, from_ws))
+    ws.on_failed_upgrade(|err| tracing::error!("Failed to upgrade ws connection: {err}"))
+        .on_upgrade(move |socket| handle_socket(socket, addr, to_ws, from_ws))
 }
 
 async fn handle_socket(

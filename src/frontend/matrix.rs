@@ -1,6 +1,7 @@
 use gloo::{events::EventListener, utils::window};
 use std::ops::Deref;
-use web_sys::HtmlCanvasElement;
+use wasm_bindgen::{JsCast, JsValue};
+use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 use yew::prelude::*;
 
 #[function_component(Canvas)]
@@ -50,4 +51,34 @@ pub fn canvas(props: &CanvasProperties) -> Html {
 pub struct CanvasProperties {
     pub renderer: Callback<HtmlCanvasElement>,
     pub style: Option<String>,
+}
+
+pub fn draw(canvas: HtmlCanvasElement, red: bool, evens: bool) {
+    let interface: CanvasRenderingContext2d = canvas
+        .get_context("2d")
+        .unwrap()
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    interface.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
+
+    let color = JsValue::from(if red { "#ff0000" } else { "#0000ff" });
+    let start = if evens { 0 } else { 1 };
+    const SIZE_OF_ELEMENT: u32 = 8;
+
+    interface.set_fill_style(&color);
+    for row in (0..(canvas.height() / SIZE_OF_ELEMENT)).into_iter() {
+        let start = ((if row % 2 == 0 { 0 } else { 1 }) + start) % 2;
+        for col in (start..(canvas.width() / SIZE_OF_ELEMENT))
+            .into_iter()
+            .step_by(2)
+        {
+            interface.fill_rect(
+                (col * SIZE_OF_ELEMENT) as f64,
+                (row * SIZE_OF_ELEMENT) as f64,
+                SIZE_OF_ELEMENT as f64,
+                SIZE_OF_ELEMENT as f64,
+            );
+        }
+    }
 }
