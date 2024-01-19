@@ -1,7 +1,7 @@
 use async_channel::{Receiver, Sender};
 use nix::pty::{self, OpenptyResult};
 use std::{
-    io::{self, ErrorKind},
+    io,
     os::fd::{AsRawFd, FromRawFd, IntoRawFd},
     path::{Path, PathBuf},
     time::Duration,

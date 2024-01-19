@@ -5,9 +5,9 @@ use gloo::{
 };
 use std::{cell::RefCell, rc::Rc, time::Duration};
 use wasm_bindgen_futures::spawn_local;
-use yew::{html::ChildrenProps, platform::time::sleep, prelude::*};
+use yew::{platform::time::sleep, prelude::*};
 
-use crate::messages::{FrontendStarted, SimMessage};
+use crate::messages::{FrontendStarted, SetDebugLed, SetRgbLed, SimMessage};
 
 #[derive(Clone, PartialEq)]
 pub struct WebsocketHandle {
@@ -21,7 +21,7 @@ impl WebsocketHandle {
 }
 
 #[function_component]
-pub fn WebsocketProvider(ChildrenProps { children }: &ChildrenProps) -> Html {
+pub fn WebsocketProvider(props: &WebsocketProviderProps) -> Html {
     let connection = use_state(|| {
         let hostname = if let (Ok(hostname), Ok(port)) =
             (window().location().hostname(), window().location().port())
@@ -38,6 +38,8 @@ pub fn WebsocketProvider(ChildrenProps { children }: &ChildrenProps) -> Html {
         (Rc::new(RefCell::new(writer)), Rc::new(RefCell::new(reader)))
     });
     use_effect_with((), {
+        let led_state_setter = props.set_led_state.clone();
+        let rgb_state_setter = props.set_rgb_state.clone();
         let connection = connection.clone();
         move |()| {
             spawn_local(async move {
@@ -58,7 +60,10 @@ pub fn WebsocketProvider(ChildrenProps { children }: &ChildrenProps) -> Html {
                     let mut reader = connection.1.try_borrow_mut().unwrap();
                     if let Some(Ok(msg)) = reader.next().await {
                         match msg {
-                            Message::Text(msg) => log::info!("Got message: {msg}"),
+                            Message::Text(msg) => {
+                                log::info!("Got message: {msg}");
+                                handle_simulator_message(msg, &led_state_setter, &rgb_state_setter);
+                            }
                             _ => log::info!("Got bytes"),
                         }
                     }
@@ -89,11 +94,34 @@ pub fn WebsocketProvider(ChildrenProps { children }: &ChildrenProps) -> Html {
     let context = WebsocketHandle { send_message };
 
     html! {
-        <ContextProvider<WebsocketHandle> {context}>{children.clone()}</ContextProvider<WebsocketHandle>>
+        <ContextProvider<WebsocketHandle> {context}>{props.children.clone()}</ContextProvider<WebsocketHandle>>
     }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct WebsocketProviderProps {
+    pub set_led_state: UseStateSetter<bool>,
+    pub set_rgb_state: UseStateSetter<(u8, u8, u8)>,
+    pub children: Children,
 }
 
 #[hook]
 pub fn use_websocket() -> WebsocketHandle {
     use_context().unwrap()
+}
+
+fn handle_simulator_message(
+    msg: String,
+    led_state_setter: &UseStateSetter<bool>,
+    rgb_state_setter: &UseStateSetter<(u8, u8, u8)>,
+) {
+    if let Ok(msg) = serde_json::from_str::<SimMessage>(&msg) {
+        match msg {
+            SimMessage::SetDebugLed(SetDebugLed { new_state }) => led_state_setter.set(new_state),
+            SimMessage::SetRgbLed(SetRgbLed { r, g, b }) => rgb_state_setter.set((r, g, b)),
+            _ => log::warn!("Unhandled sim message: {msg:?}"),
+        }
+    } else {
+        log::error!("Failed to parse sim message: {msg}")
+    }
 }
