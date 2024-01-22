@@ -7,6 +7,21 @@ pub async fn run(
     to_ws: Sender<String>,
     to_serial: Sender<Vec<u8>>,
 ) {
+    tokio::select! {
+        _ = handle_serial_message(from_serial, to_ws, to_serial.clone()) => {
+            tracing::info!("Serial handler exited");
+        },
+        _ = handle_ws_message(from_ws, to_serial) => {
+            tracing::info!("Websocket message handler exited");
+        }
+    }
+}
+
+async fn handle_serial_message(
+    from_serial: Receiver<Vec<u8>>,
+    to_ws: Sender<String>,
+    to_serial: Sender<Vec<u8>>,
+) {
     while let Ok(msg) = from_serial.recv().await {
         if msg.len() >= 2 {
             if msg[0] == 0xde && msg[1] == 0x00 && msg.len() >= 3 {
@@ -31,6 +46,22 @@ pub async fn run(
                     let _ = to_ws.send(msg).await;
                 }
                 to_serial.send(vec![0xde, 0x03, 0x00]).await.unwrap();
+            }
+        }
+    }
+}
+
+async fn handle_ws_message(from_ws: Receiver<String>, to_serial: Sender<Vec<u8>>) {
+    while let Ok(msg_str) = from_ws.recv().await {
+        if let Ok(msg) = serde_json::from_str::<SimMessage>(&msg_str) {
+            match msg {
+                SimMessage::ReportButtonPress => {
+                    tracing::debug!("Sending button press notification");
+                    to_serial.send(vec![0xde, 0x04]).await.unwrap();
+                }
+                _ => {
+                    tracing::warn!("Got unexpected message from the frontend: {msg_str}");
+                }
             }
         }
     }

@@ -1,7 +1,4 @@
-use crate::{
-    frontend::websocket_provider::use_websocket,
-    messages::{ReportButtonPress, SimMessage},
-};
+use crate::{frontend::websocket_provider::use_websocket, messages::SimMessage};
 use yew::prelude::*;
 
 #[function_component(UserButton)]
@@ -12,10 +9,7 @@ pub fn user_button(_props: &UserButtonProperties) -> Html {
     let on_press = {
         let ws = ws.clone();
         Callback::from(move |_| {
-            ws.send_message(
-                serde_json::to_string(&SimMessage::ReportButtonPress(ReportButtonPress {}))
-                    .unwrap(),
-            )
+            ws.send_message(serde_json::to_string(&SimMessage::ReportButtonPress).unwrap())
         })
     };
 

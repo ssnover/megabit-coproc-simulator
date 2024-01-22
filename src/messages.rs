@@ -6,7 +6,7 @@ pub enum SimMessage {
     FrontendStarted(FrontendStarted),
     SetDebugLed(SetDebugLed),
     SetRgbLed(SetRgbLed),
-    ReportButtonPress(ReportButtonPress),
+    ReportButtonPress,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -23,6 +23,3 @@ pub struct SetRgbLed {
     pub g: u8,
     pub b: u8,
 }
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ReportButtonPress {}
