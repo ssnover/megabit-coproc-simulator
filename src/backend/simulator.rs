@@ -1,4 +1,4 @@
-use crate::messages::{SetDebugLed, SetRgbLed, SimMessage};
+use crate::messages::{SetDebugLed, SetMatrixRow, SetRgbLed, SimMessage};
 use async_channel::{Receiver, Sender};
 
 pub async fn run(
@@ -24,6 +24,38 @@ async fn handle_serial_message(
 ) {
     while let Ok(msg) = from_serial.recv().await {
         if msg.len() >= 2 {
+            if msg[0] == 0xa0 && msg[1] == 0x00 && msg.len() >= 4 {
+                let row = msg[2].into();
+                let number_of_pixels = msg[3];
+                if usize::from(
+                    (number_of_pixels / 8) + if number_of_pixels % 8 == 0 { 0 } else { 1 },
+                ) == msg[4..].len()
+                {
+                    let pixel_states = msg[4..]
+                        .into_iter()
+                        .map(|byte| {
+                            (0..8)
+                                .into_iter()
+                                .map(move |bit| (byte & (1 << bit)) != 0x00)
+                        })
+                        .flatten()
+                        .collect::<Vec<bool>>();
+                    if let Ok(msg) =
+                        serde_json::to_string(&SimMessage::SetMatrixRow(SetMatrixRow {
+                            row,
+                            data: pixel_states,
+                        }))
+                    {
+                        let _ = to_ws.send(msg).await;
+                        to_serial.send(vec![0xa0, 0x01, 0x00]).await.unwrap();
+                    } else {
+                        to_serial.send(vec![0xa0, 0x01, 0x01]).await.unwrap();
+                    }
+                } else {
+                    tracing::warn!("Got a request to write a matrix row of invalid length");
+                    to_serial.send(vec![0xa0, 0x01, 0x01]).await.unwrap();
+                }
+            }
             if msg[0] == 0xde && msg[1] == 0x00 && msg.len() >= 3 {
                 let new_state = msg[2] != 0x00;
                 if let Ok(msg) =
@@ -58,6 +90,9 @@ async fn handle_ws_message(from_ws: Receiver<String>, to_serial: Sender<Vec<u8>>
                 SimMessage::ReportButtonPress => {
                     tracing::debug!("Sending button press notification");
                     to_serial.send(vec![0xde, 0x04]).await.unwrap();
+                }
+                SimMessage::FrontendStarted => {
+                    tracing::debug!("Got message indicating that the frontend is started");
                 }
                 _ => {
                     tracing::warn!("Got unexpected message from the frontend: {msg_str}");

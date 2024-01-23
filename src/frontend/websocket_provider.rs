@@ -1,3 +1,4 @@
+use crate::messages::{SetDebugLed, SetMatrixRow, SetRgbLed, SimMessage};
 use futures::{SinkExt, StreamExt};
 use gloo::{
     net::websocket::{futures::WebSocket, Message},
@@ -6,8 +7,6 @@ use gloo::{
 use std::{cell::RefCell, rc::Rc, time::Duration};
 use wasm_bindgen_futures::spawn_local;
 use yew::{platform::time::sleep, prelude::*};
-
-use crate::messages::{FrontendStarted, SetDebugLed, SetRgbLed, SimMessage};
 
 #[derive(Clone, PartialEq)]
 pub struct WebsocketHandle {
@@ -40,6 +39,7 @@ pub fn WebsocketProvider(props: &WebsocketProviderProps) -> Html {
     use_effect_with((), {
         let led_state_setter = props.set_led_state.clone();
         let rgb_state_setter = props.set_rgb_state.clone();
+        let update_cb = props.update_row_cb.clone();
         let connection = connection.clone();
         move |()| {
             spawn_local(async move {
@@ -48,8 +48,7 @@ pub fn WebsocketProvider(props: &WebsocketProviderProps) -> Html {
                     .try_borrow_mut()
                     .unwrap()
                     .send(Message::Text(
-                        serde_json::to_string(&SimMessage::FrontendStarted(FrontendStarted {}))
-                            .unwrap(),
+                        serde_json::to_string(&SimMessage::FrontendStarted).unwrap(),
                     ))
                     .await
                 {
@@ -62,7 +61,12 @@ pub fn WebsocketProvider(props: &WebsocketProviderProps) -> Html {
                         match msg {
                             Message::Text(msg) => {
                                 log::info!("Got message: {msg}");
-                                handle_simulator_message(msg, &led_state_setter, &rgb_state_setter);
+                                handle_simulator_message(
+                                    msg,
+                                    &led_state_setter,
+                                    &rgb_state_setter,
+                                    &update_cb,
+                                );
                             }
                             _ => log::info!("Got bytes"),
                         }
@@ -102,6 +106,7 @@ pub fn WebsocketProvider(props: &WebsocketProviderProps) -> Html {
 pub struct WebsocketProviderProps {
     pub set_led_state: UseStateSetter<bool>,
     pub set_rgb_state: UseStateSetter<(u8, u8, u8)>,
+    pub update_row_cb: Callback<(u8, Vec<bool>)>,
     pub children: Children,
 }
 
@@ -114,11 +119,15 @@ fn handle_simulator_message(
     msg: String,
     led_state_setter: &UseStateSetter<bool>,
     rgb_state_setter: &UseStateSetter<(u8, u8, u8)>,
+    update_cb: &Callback<(u8, Vec<bool>)>,
 ) {
     if let Ok(msg) = serde_json::from_str::<SimMessage>(&msg) {
         match msg {
             SimMessage::SetDebugLed(SetDebugLed { new_state }) => led_state_setter.set(new_state),
             SimMessage::SetRgbLed(SetRgbLed { r, g, b }) => rgb_state_setter.set((r, g, b)),
+            SimMessage::SetMatrixRow(SetMatrixRow { row, data }) => {
+                update_cb.emit((row as u8, data));
+            }
             _ => log::warn!("Unhandled sim message: {msg:?}"),
         }
     } else {
