@@ -60,7 +60,7 @@ pub fn WebsocketProvider(props: &WebsocketProviderProps) -> Html {
                     if let Some(Ok(msg)) = reader.next().await {
                         match msg {
                             Message::Text(msg) => {
-                                log::info!("Got message: {msg}");
+                                log::debug!("Got message: {msg}");
                                 handle_simulator_message(
                                     msg,
                                     &led_state_setter,
