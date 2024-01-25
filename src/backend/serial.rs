@@ -113,7 +113,7 @@ impl VirtualSerial {
             tracing::debug!("Sending serial data: {encoded_data:02x?}");
             // The following is hanging for unclear reasons...
             if tokio::time::timeout(Duration::from_secs(5), async {
-                if let Err(err) = writer.write(&encoded_data[..]).await {
+                if let Err(err) = writer.write_all(&encoded_data[..]).await {
                     tracing::error!("Failed to write encoded serial packet: {err}");
                 } else {
                     if let Err(err) = writer.flush().await {

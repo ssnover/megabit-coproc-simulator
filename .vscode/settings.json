@@ -1,6 +1,6 @@
 {
     "rust-analyzer.cargo.features": [
-        "frontend"
+        "backend"
     ],
     "rust-analyzer.showUnlinkedFileNotification": false
 }
